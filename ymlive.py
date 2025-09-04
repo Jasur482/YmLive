@@ -318,9 +318,10 @@ class YmLive(loader.Module):
 
             # План Б: если 10 минут (600 секунд) не менялось название — считаем, что ничего не играет
             if self._last_change_ts and (now - self._last_change_ts) > 600:  # ADDED
-                await self.update_channel_title(self.config["channel_id"], "⏸️Сейчас ничего не играет")
+                await self.update_channel_title(self.config["channel_id"], "⏸️ Сейчас ничего не играет")
                 self._last_track_title = None
                 self._last_change_ts = now
 
         except Exception as e:
             logging.error(f"Ошибка в autochannel_loop: {e}")
+
