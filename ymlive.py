@@ -180,24 +180,24 @@ class YmLive(loader.Module):
             raw = await _raw_get_current_track_ws(token)
             if not raw or not raw.get("success"):
                 paused_flag = bool(raw.get("paused")) if isinstance(raw, dict) else False
-                await client.stop()
+                await client.close()
                 if raw and "paused" in raw:
                     return {"paused": paused_flag}
                 return None
 
             track_entry = raw.get("track_entry")
             if not track_entry:
-                await client.stop()
+                await client.close()
                 return None
 
             playable_id = track_entry.get("playable_id")
             if not playable_id:
-                await client.stop()
+                await client.close()
                 return None
 
             info = await client.tracks_download_info(playable_id, True)
             track = await client.tracks(playable_id)
-            await client.stop()
+            await client.close()
 
             if isinstance(track, (list, tuple)) and track:
                 track_item = track[0]
@@ -347,3 +347,4 @@ class YmLive(loader.Module):
                 self._last_change_ts = now
         except Exception as e:
             logging.exception("Ошибка в autochannel_loop: %s", e)
+
