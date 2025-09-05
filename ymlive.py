@@ -1,6 +1,4 @@
-update_channel_title(channel_id, self.strings["paused_title"])
-                    await self._edit_message(channel_id, artist_msg_id, self.strings["artist_placeholder"])
-                    self._last_track_title = None
+_last_track_title = None
                     self._last_change_ts = now
                 return
 
