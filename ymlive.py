@@ -16,7 +16,7 @@ class YandexMusicLiveMod(loader.Module):
     strings = {
         "name": "YandexMusicLive",
         "channel_id_error": "🚫 **ID канала не указан.**\nУкажите его в конфиге модуля.",
-        "on/off": "🎧 **Автоматическое обновление названия канала {}!**",
+        "on/off": "🎧 **Автоматическое обновление информации в канале {}!**",
         "_from_bot_channel_error": "🚫 **ID канала не указан в конфиге YandexMusicLive.**",
         "history_title": "<b>📜 История треков:</b>\n\n",
         "artist_placeholder": "-",
@@ -71,13 +71,11 @@ class YandexMusicLiveMod(loader.Module):
     async def update_channel_title(self, channel_id, title):
         """Обновление только названия канала и удаление сервисного сообщения"""
         try:
-            # Получаем текущее название, чтобы не отправлять лишний запрос
             channel_info = await self.inline.bot.get_chat(int(f'-100{channel_id}'))
             current_title = channel_info.title
 
             if current_title != title:
                 await self.inline.bot.set_chat_title(int(f'-100{channel_id}'), title)
-                # Попытка удалить сервисное сообщение об изменении названия
                 messages = await self._client.get_messages(int(f'-100{channel_id}'), limit=1)
                 if messages and messages[0].action:
                     await messages[0].delete()
@@ -94,13 +92,13 @@ class YandexMusicLiveMod(loader.Module):
                 parse_mode="HTML",
                 disable_web_page_preview=True
             )
-        except Exception as e:
-            logging.error(f"Не удалось отредактировать сообщение {message_id}: {e}")
+        except Exception:
+            # Игнорируем ошибки, если сообщение не изменилось
+            pass
 
     async def _post_initial_messages(self, channel_id):
         """Создает начальные сообщения и сохраняет их ID"""
         try:
-            # Удаляем старые сообщения, чтобы избежать путаницы
             async for msg in self._client.iter_messages(int(f'-100{channel_id}')):
                 await msg.delete()
 
@@ -121,31 +119,8 @@ class YandexMusicLiveMod(loader.Module):
             logging.error(f"Не удалось создать начальные сообщения: {e}")
             return None, None
 
-    @loader.command(ru_doc="- включить/выключить YaLive")
-    async def yalive(self, message):
-        """Включение или выключение автоматического обновления"""
-        if not self.config["channel_id"]:
-            await utils.answer(message, self.strings["channel_id_error"])
-            return
-
-        autochannel_status = self.get("autochannel", False)
-        new_status = not autochannel_status
-        self.set("autochannel", new_status)
-
-        if new_status:
-            await self._post_initial_messages(self.config["channel_id"])
-            # Принудительно запускаем цикл сразу после включения
-            await self.autochannel_loop()
-
-        status_text = "включено" if new_status else "отключено"
-        await utils.answer(message, self.strings["on/off"].format(status_text))
-
-    @loader.loop(interval=15, autostart=True)
-    async def autochannel_loop(self):
-        """Цикл для автоматического обновления информации в канале"""
-        if not self.get("autochannel"):
-            return
-
+    async def _update_logic(self):
+        """Основная логика обновления, вынесенная в отдельный метод"""
         channel_id = self.config["channel_id"]
         if not channel_id:
             if self.get("autochannel"):
@@ -168,44 +143,35 @@ class YandexMusicLiveMod(loader.Module):
             track_info = await self.get_current_track()
             now = time.time()
 
-            # Случай 1: Музыка на паузе или ничего не играет
             if not track_info or track_info.get("paused"):
-                if self._last_track_title is not None: # Обновляем только если статус изменился
+                if self._last_track_title is not None:
                     await self.update_channel_title(channel_id, self.strings["paused_title"])
                     await self._edit_message(channel_id, artist_msg_id, self.strings["artist_placeholder"])
                     self._last_track_title = None
                     self._last_change_ts = now
                 return
 
-            # Случай 2: Играет новый трек
             track_title = track_info['title']
             if track_title != self._last_track_title:
                 artists = utils.escape_html(track_info["artists"])
                 
-                # Обновляем заголовок канала и сообщение с артистом
                 await self.update_channel_title(channel_id, track_title)
                 await self._edit_message(channel_id, artist_msg_id, artists)
 
-                # Обновляем историю
                 track_history = self.get("track_history", [])
-                
-                # Создаем markdown-ссылку
                 track_url = f"https://music.yandex.ru/album/{track_info['album_id']}/track/{track_info['id']}"
                 new_history_entry = f"<a href=\"{track_url}\">{utils.escape_html(track_title)} - {artists}</a>"
 
-                # Избегаем дублирования последнего трека в истории
                 if not track_history or track_history[-1] != new_history_entry:
                     track_history.append(new_history_entry)
 
-                # Оставляем только последние 10 треков
                 if len(track_history) > 10:
                     track_history = track_history[-10:]
                 
                 self.set("track_history", track_history)
 
-                # Формируем и обновляем сообщение с историей
                 history_text = self.strings["history_title"] + "\n".join(
-                    f"<b>{i+1}.</b> {track}" for i, track in enumerate(reversed(track_history))
+                    f"<b>{i}.</b> {track}" for i, track in enumerate(reversed(track_history), 1)
                 )
                 await self._edit_message(channel_id, history_msg_id, history_text)
 
@@ -213,7 +179,6 @@ class YandexMusicLiveMod(loader.Module):
                 self._last_change_ts = now
                 return
 
-            # Случай 3: Трек не менялся долгое время (считаем паузой)
             if self._last_change_ts and (now - self._last_change_ts) > 600:
                 await self.update_channel_title(channel_id, self.strings["paused_title"])
                 await self._edit_message(channel_id, artist_msg_id, self.strings["artist_placeholder"])
@@ -221,4 +186,32 @@ class YandexMusicLiveMod(loader.Module):
                 self._last_change_ts = now
 
         except Exception as e:
-            logging.error(f"Критическая ошибка в autochannel_loop: {e}")
+            logging.error(f"Критическая ошибка в _update_logic: {e}")
+
+    @loader.command(ru_doc="- включить/выключить YaLive")
+    async def yalive(self, message):
+        """Включение или выключение автоматического обновления"""
+        if not self.config["channel_id"]:
+            await utils.answer(message, self.strings["channel_id_error"])
+            return
+
+        autochannel_status = self.get("autochannel", False)
+        new_status = not autochannel_status
+        self.set("autochannel", new_status)
+
+        if new_status:
+            await self._post_initial_messages(self.config["channel_id"])
+            # Вызываем основную логику для мгновенного обновления
+            await self._update_logic()
+
+        status_text = "включено" if new_status else "отключено"
+        await utils.answer(message, self.strings["on/off"].format(status_text))
+
+    @loader.loop(interval=15, autostart=True)
+    async def autochannel_loop(self):
+        """Цикл для автоматического обновления информации в канале"""
+        if not self.get("autochannel"):
+            return
+        
+        # Просто вызываем основную логику
+        await self._update_logic()
